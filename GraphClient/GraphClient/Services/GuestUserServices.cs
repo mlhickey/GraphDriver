@@ -4,6 +4,7 @@ using Microsoft.Graph;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 
 namespace Services
@@ -28,7 +29,7 @@ namespace Services
                 .Build();
             _clientFactory = new GraphServiceClientFactory();
 
-            _guestProperties = configuration.GetValue<string>("GuestUserProps", GuestUserConfiguration.StaleGuestProperties );
+            _guestProperties = configuration.GetValue<string>("GuestUserProps", GuestUserConfiguration.StaleGuestProperties);
             //
             // Set removal range values to user staleness evaluation
             //
@@ -110,7 +111,7 @@ namespace Services
             return await GetGuestAccounts(false, _removalRange);
         }
 
-        private async Task<List<User>> GetGuestAccounts(bool enabled, int staleRange)
+        private async Task<List<User>> GetGuestAccounts(bool enabled, int staleRange, [CallerMemberName] string callerName = "")
         {
             var staleDate = DateTime.Now.AddDays(staleRange);
             var result = new List<User>();
@@ -136,7 +137,7 @@ namespace Services
                    .Select(_guestProperties)
                    .Top(999)
                    .GetAsync();
-                Console.WriteLine($"{GetType().Name}: Total of {GetDictionaryValue(request.AdditionalData, "@odata.count")} objects");
+                Console.WriteLine($"{callerName}::GetGuestAccounts: Total of {GetDictionaryValue(request.AdditionalData, "@odata.count")} objects");
                 result = await ProcessBoundRequestList(request, staleDate);
             }
             catch (Exception ex)
@@ -203,16 +204,16 @@ namespace Services
         /// <returns></returns>
         public DateTimeOffset? GetLastSignIn(User user)
         {
-            if (user.SignInActivity != null)
-                return DateTimeOffset.Compare((DateTimeOffset)user.SignInActivity.LastSignInDateTime, (DateTimeOffset)user.SignInActivity.LastNonInteractiveSignInDateTime) > 0
+            if (user?.SignInActivity != null)
+                return user.SignInActivity.LastSignInDateTime > user.SignInActivity.LastNonInteractiveSignInDateTime
                         ? user.SignInActivity.LastSignInDateTime
                         : user.SignInActivity.LastNonInteractiveSignInDateTime;
 
             if (user.CreatedDateTime != null && user.SignInSessionsValidFromDateTime != null)
             {
-                return DateTimeOffset.Compare((DateTimeOffset)user.CreatedDateTime, (DateTimeOffset)user.SignInSessionsValidFromDateTime) > 0
-                    ? user?.CreatedDateTime
-                    : user?.SignInSessionsValidFromDateTime;
+                return user.CreatedDateTime > user.SignInSessionsValidFromDateTime
+                        ? user.CreatedDateTime
+                        : user.SignInSessionsValidFromDateTime;
             }
             return user.CreatedDateTime ?? user.SignInSessionsValidFromDateTime;
         }
@@ -252,6 +253,7 @@ namespace Services
             };
             return result;
         }
+
         /// <summary>
         /// ProcessBoundRequestList performs NextPage processing of associated request with additional validation:
         ///     - Not member of exemption group

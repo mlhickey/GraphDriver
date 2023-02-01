@@ -3,6 +3,7 @@ using Services;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Threading.Tasks;
 
 namespace ConsoleApp
@@ -47,7 +48,7 @@ namespace ConsoleApp
                 threadWatch.Start();
                 var uRet = await s.Invoke();
                 threadWatch.Stop();
-#if LOG_OUTPUT
+#if DEBUG
                 using (StreamWriter writer = new StreamWriter(new FileStream($"{s.Method.Name}.csv", FileMode.Create, FileAccess.Write)))
                 {
                     writer.WriteLine("displayName,id,lastLogin");
