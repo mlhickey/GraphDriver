@@ -40,6 +40,7 @@ namespace Services
         {
             return CreateAsync(_graphUri, timeOut);
         }
+
         /// <summary>
         /// CreateAsync - create new GraphServceClient using specified Uri and timeout period
         /// </summary>

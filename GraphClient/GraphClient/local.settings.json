@@ -1,10 +1,11 @@
 {
   "AzureEnvironment": "com",
-  "StaleRange": 180,
+  "StaleRange": 60,
   "StaleInvitationRange": 90,
-  "RemovalRange": 545,
-  "MaxAttempts": 8,
-  "ExemptionGroupGUID": "e6baf2ff-d76b-4608-9239-93daf30dfbee",
+  "RemovalRange": 74,
+  "MaxAttempts": 10,
+  "MaxKeepAlive": 90,
+  "ExemptionGroupGUID": "adaadda0-1462-435e-8115-cba7d2fd6d73;e6baf2ff-d76b-4608-9239-93daf30dfbee",
   "GuestUserProps": "id,displayName,userPrincipalName,externalUserState,createdDateTime,signInSessionsValidFromDateTime,signInActivity",
   "GraphVersion": "beta"
 }

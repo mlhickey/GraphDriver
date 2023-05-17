@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace ConsoleApp
@@ -20,7 +21,7 @@ namespace ConsoleApp
             _guestUserServices = new GuestUserServices();
             _services = new List<InactiveUserServices>
             {
-                _guestUserServices.GetUnacceptedInvitees,
+                //_guestUserServices.GetUnacceptedInvitees,
                 _guestUserServices.GetDisableInactiveGuests,
                 _guestUserServices.GetInactiveGuests
             };
@@ -48,14 +49,32 @@ namespace ConsoleApp
                 threadWatch.Start();
                 var uRet = await s.Invoke();
                 threadWatch.Stop();
+                Console.WriteLine($"{uRet.Count} users returned for {s.Method.Name}");
+
 #if DEBUG
+                int exempt = 0;
+                ParallelOptions parallelOptions = new()
+                {
+                    MaxDegreeOfParallelism = 100
+                };
+                await Parallel.ForEachAsync(uRet, async (u, cancellationToken) =>
+                {
+                    if (await _guestUserServices.IsMemberOfExceptionGroups(u.Id))
+                        exempt++;
+                });
+                //var eRet = uRet.Where(u => !_guestUserServices.IsMemberOfExceptionGroups(u.Id).Result).ToList();
+                //var exempt = uRet.Count - eRet.Count;
+                Console.WriteLine($"Total of {exempt} users exempted");
                 using (StreamWriter writer = new StreamWriter(new FileStream($"{s.Method.Name}.csv", FileMode.Create, FileAccess.Write)))
                 {
-                    writer.WriteLine("displayName,id,lastLogin");
+                    writer.WriteLine("displayName,id,AccountEnabled");
                     foreach (var u in uRet)
                     {
+                        /*
                         var lastLogin = _guestUserServices.GetLastSignIn(u).Value.ToString("yyyy-MM-dd");
                         writer.WriteLine($"{u.UserPrincipalName},{u.Id},{lastLogin}");
+                        */
+                        writer.WriteLine($"{u.UserPrincipalName},{u.Id},{u.AccountEnabled}");
                     }
                 }
 #endif
