@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Threading.Tasks;
 
 namespace ConsoleApp
@@ -52,30 +51,22 @@ namespace ConsoleApp
                 Console.WriteLine($"{uRet.Count} users returned for {s.Method.Name}");
 
 #if DEBUG
-                int exempt = 0;
                 ParallelOptions parallelOptions = new()
                 {
                     MaxDegreeOfParallelism = 100
                 };
-                await Parallel.ForEachAsync(uRet, async (u, cancellationToken) =>
-                {
-                    if (await _guestUserServices.IsMemberOfExceptionGroups(u.Id))
-                        exempt++;
-                });
-                //var eRet = uRet.Where(u => !_guestUserServices.IsMemberOfExceptionGroups(u.Id).Result).ToList();
-                //var exempt = uRet.Count - eRet.Count;
-                Console.WriteLine($"Total of {exempt} users exempted");
+                object __lockObj = new object();
                 using (StreamWriter writer = new StreamWriter(new FileStream($"{s.Method.Name}.csv", FileMode.Create, FileAccess.Write)))
                 {
                     writer.WriteLine("displayName,id,AccountEnabled");
-                    foreach (var u in uRet)
+                    Parallel.ForEach(uRet, (u, cancellationToken) =>
                     {
-                        /*
-                        var lastLogin = _guestUserServices.GetLastSignIn(u).Value.ToString("yyyy-MM-dd");
-                        writer.WriteLine($"{u.UserPrincipalName},{u.Id},{lastLogin}");
-                        */
-                        writer.WriteLine($"{u.UserPrincipalName},{u.Id},{u.AccountEnabled}");
+                        lock (__lockObj)
+                        {
+                            writer.WriteLine($"{u?.UserPrincipalName},{u?.Id},{u?.AccountEnabled},{u?.SignInActivity?.LastSignInDateTime}");
+                        }
                     }
+                    );
                 }
 #endif
                 Console.WriteLine($"{s.GetType().Name}::{s.Method.Name} - {uRet.Count} objects in scope, elapsed time {threadWatch.Elapsed}");

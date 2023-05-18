@@ -5,7 +5,6 @@ using Microsoft.Graph;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 
@@ -13,7 +12,7 @@ namespace Services
 {
     public class GuestUserServices
     {
-        private readonly IGraphServiceClientFactory _clientFactory;
+        private readonly GraphServiceClient _client;
         private readonly List<string> _exemptionList;
 
         private readonly int _staleRange;
@@ -22,15 +21,15 @@ namespace Services
         private readonly int _maxAttempts;
         private readonly string _guestProperties;
 
-        private Func<IDictionary<string, object>, string, string> GetDictionaryValue = (x, y) => (string)(x.ContainsKey(y) ? x[y].ToString() : "0");
+        private Func<IDictionary<string, object>, string, string> GetDictionaryValue = (x, y) => x.ContainsKey(y) ? x[y].ToString() : "0";
 
-        public GuestUserServices()
+        public GuestUserServices(/*IGraphServiceClient graphServiceClient, IConfiguration configuration*/)
         {
             var configuration = new ConfigurationBuilder()
                 .SetBasePath(System.IO.Directory.GetCurrentDirectory())
                 .AddJsonFile("local.settings.json")
                 .Build();
-            _clientFactory = new GraphServiceClientFactory();
+            _client = new GraphServiceClientService(configuration).client;
 
             _guestProperties = configuration.GetValue<string>("GuestUserProps", GuestUserConfiguration.StaleGuestProperties);
             _maxAttempts = configuration.GetValue<int>("MaxAttempts", 8);
@@ -44,15 +43,19 @@ namespace Services
             // Check for exemption group, build list of value is non-null
             //
             var eGuid = configuration.GetValue<string>("ExemptionGroupGUID", GuestUserConfiguration.ExemptionGroupGUID);
+#if by_guid
             _exemptionList = eGuid.Split(';').ToList();
+#else
             if (!string.IsNullOrEmpty(eGuid))
             {
-                //this._exemptionList = GetExemptionGroupMembership(eGuid).Result;
+                _exemptionList = GetExemptionGroupMembership(eGuid).Result;
             }
             else
             {
                 _exemptionList = new List<string>();
             }
+#endif
+            Console.WriteLine($"Total of {_exemptionList.Count} exempt users");
         }
 
         /// <summary>
@@ -72,6 +75,7 @@ namespace Services
             return value * -1;
         }
 
+        #region ExemptUsers
 
         /// <summary>
         /// IsMemberOfExceptionGroups - check to see if specified id is a member of an exception group
@@ -80,17 +84,18 @@ namespace Services
         /// <returns>
         /// bool
         /// </returns>
-        public async Task<bool> IsMemberOfExceptionGroups(string id)
+        public bool IsMemberOfExceptionGroups(string id)
         {
             if (_exemptionList.Count == 0)
             {
                 Console.WriteLine("No exemption group specified, all users will be in scope");
                 return false;
             }
-            var client = await _clientFactory.CreateAsync();
+#if by_guid
+
             try
             {
-                var res = await client.Users[id].CheckMemberGroups(_exemptionList).Request().PostAsync();
+                var res = await _client.Users[id].CheckMemberGroups(_exemptionList).Request().PostAsync();
                 return res.Count > 0;
             }
             catch (ServiceException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
@@ -102,7 +107,39 @@ namespace Services
                 Console.WriteLine($"IsMemberOfExceptionGroups: {ex.Message}");
                 return false;
             }
+#else
+
+            return _exemptionList.Contains(id);
+#endif
         }
+
+        /// <summary>
+        /// GetExemptionGroupMembership - Creates user ID list basded on transitive membership
+        /// </summary>
+        /// <returns>List<string></returns>
+        private async Task<List<string>> GetExemptionGroupMembership(string groupId)
+        {
+            try
+            {
+                var exemptionMembers = await _client.Groups[groupId]
+                    .TransitiveMembers
+                    .Request()
+                    .Select("id")
+                    .WithMaxRetry(_maxAttempts)
+                    .Top(999)
+                    .GetAsync();
+
+                var exemptionList = await ProcessRequestList(exemptionMembers);
+                return exemptionList;
+            }
+            catch (ServiceException ex)
+            {
+                Console.WriteLine($"GetExemptionGroupMembership retrival failed: {ex.InnerException.Message}");
+                return new List<string>();
+            }
+        }
+
+        #endregion ExemptUsers
 
         #region InactiveUsers
 
@@ -132,8 +169,8 @@ namespace Services
         {
             var staleDate = DateTime.Now.AddDays(staleRange);
             var result = new List<User>();
-            var client = await _clientFactory.CreateAsync();
             var isEnabled = enabled.ToString().ToLower();
+            int oos = 0;
 
             var queryBuilder = new List<string> {
                 "externalUserState eq 'Accepted'",
@@ -153,7 +190,7 @@ namespace Services
 #endif
             try
             {
-                var request = await client.Users
+                var request = await _client.Users
                    .Request(queryOptions)
                    .Filter(queryFilter)
                    .WithMaxRetry(_maxAttempts)
@@ -161,7 +198,7 @@ namespace Services
                    .GetAsync();
 #if signinactivity
 
-                var pageIterator = PageIterator<User>.CreatePageIterator(client, request, (u) =>
+                var pageIterator = PageIterator<User>.CreatePageIterator(_client, request, (u) =>
                 {
                     if ((u.UserType == "Guest" && u.ExternalUserState == "Accepted")
                     && u.AccountEnabled == enabled
@@ -171,34 +208,38 @@ namespace Services
                 await pageIterator.IterateAsync();
 #else
                 Console.WriteLine($"{callerName}::GetGuestAccounts: Total of {GetDictionaryValue(request.AdditionalData, "@odata.count")} {enabled} objects");
-                //result = await ProcessBoundRequestList(request, staleDate);
-                var pageIterator = PageIterator<User>.CreatePageIterator(client, request, (u) =>
+#if local
+                result = await ProcessBoundRequestList(request, staleDate);
+#else
+                var pageIterator = PageIterator<User>.CreatePageIterator(_client, request, (u) =>
                 {
-                    //if (!_exemptionList.Contains(u.Id) && IsInactivePastThreshold(u, staleDate))
-                    if (IsInactivePastThreshold(u, staleDate))
+                    if (!IsMemberOfExceptionGroups(u.Id) && IsInactivePastThreshold(u, staleDate))
                         result.Add(u);
+                    else
+                        oos++;
                     return true;
                 });
                 await pageIterator.IterateAsync();
 #endif
+                Console.WriteLine($"{callerName}::GetGuestAccounts:Excluded {oos} users");
+#endif
             }
-            catch (Exception ex)
+            catch (ServiceException ex)
             {
                 var failureType = result.Count() > 0 ? "partially" : "completely";
-                Console.WriteLine($"{callerName}::GetGuestAccounts: retrieval {failureType} failed: {ex.Message}");
+                Console.WriteLine($"{callerName}::GetGuestAccounts: retrieval {failureType} failed: {ex.InnerException.Message}");
             }
 
             return result;
         }
 
-#endregion InactiveUsers
+        #endregion InactiveUsers
 
         #region UnaccptedInvitations
 
         public async Task<List<User>> GetUnacceptedInvitees()
         {
             var result = new List<User>();
-            var client = await _clientFactory.CreateAsync();
             var staleDate = DateTime.Now.AddDays(_staleInviteRange).ToString("yyyy-MM-ddTHH:mm:ssZ");
 
             var queryBuilder = new List<string> {
@@ -214,24 +255,27 @@ namespace Services
 
             try
             {
-                var request = await client.Users
+                var request = await _client.Users
                    .Request(queryOptions)
                    .Filter(string.Join(" and ", queryBuilder))
                    .Select(_guestProperties)
                    .Top(999)
                    .GetAsync();
                 Console.WriteLine($"{GetType().Name}: Total of {GetDictionaryValue(request.AdditionalData, "@odata.count")} objects");
-                var pageIterator = PageIterator<User>.CreatePageIterator(client, request, (u) =>
+#if local
+                result = await ProcessRequestList(request);
+#else
+                var pageIterator = PageIterator<User>.CreatePageIterator(_client, request, (u) =>
                 {
                     result.Add(u); return true;
                 });
                 await pageIterator.IterateAsync();
-                //result = await ProcessRequestList(request);
+#endif
             }
             catch (ServiceException ex)
             {
                 var failureType = result.Count() > 0 ? "partially" : "completely";
-                Console.WriteLine($"GetUnacceptedInvitees retrival failed: {ex.Message}");
+                Console.WriteLine($"GetUnacceptedInvitees retrieval {failureType} failed: {ex.InnerException.Message}");
             }
             return result;
         }
@@ -285,15 +329,15 @@ namespace Services
         private async Task<List<string>> ProcessRequestList(IGroupTransitiveMembersCollectionWithReferencesPage request)
         {
             var result = new List<string>();
+            result.AddRange(request.CurrentPage.Select(i => i.Id));
 
-            while (request != null)
+            while (request.NextPageRequest != null)
             {
-                result.AddRange(request.Select(i => i.Id));
-                if (request.NextPageRequest == null) break;
-
                 request = await request.NextPageRequest
                     .WithMaxRetry(_maxAttempts)
                     .GetAsync();
+
+                result.AddRange(request.CurrentPage.Select(i => i.Id));
             };
             return result.Distinct().ToList();
         }
@@ -315,6 +359,7 @@ namespace Services
                 request = await request.NextPageRequest
                     .WithMaxRetry(_maxAttempts)
                     .GetAsync();
+
                 result.AddRange(request.CurrentPage);
             };
             return result;
@@ -334,8 +379,7 @@ namespace Services
             var result = new List<User>();
 
             result.AddRange(request.CurrentPage
-                .Where(u => !_exemptionList.Contains(u.Id) && IsInactivePastThreshold(u, staleDate))
-                .ToList());
+                .Where(u => !IsMemberOfExceptionGroups(u.Id) && IsInactivePastThreshold(u, staleDate)));
 
             while (request.NextPageRequest != null)
             {
@@ -346,13 +390,11 @@ namespace Services
                         .GetAsync();
 
                     result.AddRange(request.CurrentPage
-                        .Where(u => !_exemptionList.Contains(u.Id) && IsInactivePastThreshold(u, staleDate))
-                        .ToList());
+                        .Where(u => !IsMemberOfExceptionGroups(u.Id) && IsInactivePastThreshold(u, staleDate)));
                 }
-                catch (Exception ex)
+                catch (ServiceException ex)
                 {
-                    Console.WriteLine($"Retrieval stoppd with {result.Count} entries: {ex.Message}");
-                    return result;
+                    Console.WriteLine($"Retrieval stoppd with {result.Count} entries: {ex.InnerException.Message}");
                 }
             };
             return result;
