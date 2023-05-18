@@ -15,7 +15,7 @@ namespace ConsoleApp.Services
         private readonly int _maxAttempts;
         public GraphServiceClient client => _graphServiceClient;
 
-        public GraphServiceClientService(IConfiguration configuration)
+        public GraphServiceClientService(IConfiguration configuration /*,ITokenService tokenService*/)
         {
             _maxAttempts = configuration.GetValue("MaxAttempts", 8);
             _graphEndpoint = $"https://graph.microsoft.{configuration.GetValue("AzureEnvironment", "com")}";
