@@ -6,23 +6,33 @@ using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 
+/*
+using IHost host = Host.CreateDefaultBuilder(args)
+    .ConfigureServices(services =>
+    {
+        services.AddSingleton<GraphServiceClientService>();
+        services.AddSingleton<ITokenService, TokenService>();
+        services.AddSingleton<GraphServiceClient>();
+    })
+    .Build();
+*/
+
 namespace ConsoleApp
 {
     internal delegate Task<List<User>> InactiveUserServices();
 
     internal class Program
     {
-        private static GuestUserServices _guestUserServices;
+        private static GuestUserServices _guestUserServices = new GuestUserServices();
         private static List<InactiveUserServices> _services;
 
         private static async Task Main(string[] args)
         {
-            _guestUserServices = new GuestUserServices();
             _services = new List<InactiveUserServices>
             {
                 //_guestUserServices.GetUnacceptedInvitees,
-                _guestUserServices.GetDisableInactiveGuests,
-                _guestUserServices.GetInactiveGuests
+                _guestUserServices.GetDisableInactiveGuests
+                //_guestUserServices.GetInactiveGuests
             };
 
             await GraphDriver();
@@ -36,10 +46,10 @@ namespace ConsoleApp
         {
             Stopwatch stopWatch = new Stopwatch(); ;
             stopWatch.Start();
-#if !NET6_0
-            foreach (var s in _services)
-#else
+#if NET6_0
             await Parallel.ForEachAsync(_services, async (s, cancellationToken) =>
+#else
+            foreach (var s in _services)
 #endif
             {
                 Console.WriteLine($"{s.GetType().Name}::{s.Method.Name} start");
@@ -48,25 +58,16 @@ namespace ConsoleApp
                 threadWatch.Start();
                 var uRet = await s.Invoke();
                 threadWatch.Stop();
-                Console.WriteLine($"{uRet.Count} users returned for {s.Method.Name}");
-
 #if DEBUG
-                ParallelOptions parallelOptions = new()
-                {
-                    MaxDegreeOfParallelism = 100
-                };
-                object __lockObj = new object();
+                Console.WriteLine($"{uRet.Count} users returned for {s.Method.Name}");
                 using (StreamWriter writer = new StreamWriter(new FileStream($"{s.Method.Name}.csv", FileMode.Create, FileAccess.Write)))
                 {
-                    writer.WriteLine("displayName,id,AccountEnabled");
-                    Parallel.ForEach(uRet, (u, cancellationToken) =>
+                    writer.WriteLine("displayName,id,AccountEnabled,lastSignin");
+                    foreach (var u in uRet)
                     {
-                        lock (__lockObj)
-                        {
-                            writer.WriteLine($"{u?.UserPrincipalName},{u?.Id},{u?.AccountEnabled},{u?.SignInActivity?.LastSignInDateTime}");
-                        }
+                        var last = _guestUserServices.GetLastSignIn(u).Value.DateTime;
+                        writer.WriteLine($"{u?.UserPrincipalName},{u?.Id},{u?.AccountEnabled},{last.ToString("yyyy-MM-dd")}");
                     }
-                    );
                 }
 #endif
                 Console.WriteLine($"{s.GetType().Name}::{s.Method.Name} - {uRet.Count} objects in scope, elapsed time {threadWatch.Elapsed}");

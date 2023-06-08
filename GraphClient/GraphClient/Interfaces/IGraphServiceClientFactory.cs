@@ -1,10 +1,6 @@
-﻿using Microsoft.Graph;
-using System.Threading.Tasks;
-
-namespace Services
+﻿namespace Services
 {
     public interface IGraphServiceClientService
     {
-
     }
 }

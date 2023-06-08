@@ -1,33 +1,28 @@
 ﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Graph;
-using Services;
 using System;
 using System.Net.Http.Headers;
 
-namespace ConsoleApp.Services
+namespace Services
 {
     public class GraphServiceClientService : IGraphServiceClientService
     {
-        private readonly string _graphEndpoint;
-        private readonly string _graphUri;
-        private readonly ITokenService _azureServiceTokenProvider = new TokenService();
+        private readonly ITokenService tokenService = new TokenService();
         private readonly GraphServiceClient _graphServiceClient;
-        private readonly int _maxAttempts;
         public GraphServiceClient client => _graphServiceClient;
 
         public GraphServiceClientService(IConfiguration configuration /*,ITokenService tokenService*/)
         {
-            _maxAttempts = configuration.GetValue("MaxAttempts", 8);
-            _graphEndpoint = $"https://graph.microsoft.{configuration.GetValue("AzureEnvironment", "com")}";
-            _graphUri = $"{_graphEndpoint}/{configuration.GetValue("GraphVersion", "v1.0")}";
+            var maxAttempts = configuration.GetValue("MaxAttempts", 8);
+            var graphEndpoint = $"https://graph.microsoft.{configuration.GetValue("AzureEnvironment", "com")}";
+            var graphUri = $"{graphEndpoint}/{configuration.GetValue("GraphVersion", "v1.0")}";
 
-            _graphServiceClient = new GraphServiceClient(_graphUri,
+            _graphServiceClient = new GraphServiceClient(graphUri,
                 new DelegateAuthenticationProvider(async (requestMessage) =>
                 {
-                    requestMessage.Headers.Authorization = new AuthenticationHeaderValue("bearer", await _azureServiceTokenProvider.GetAccessTokenAsync(_graphEndpoint));
-                    requestMessage.Headers.Add("ConsistencyLevel", "eventual");
+                    requestMessage.Headers.Authorization = new AuthenticationHeaderValue("bearer", await tokenService.GetAccessTokenAsync(graphEndpoint));
                 }));
-            _graphServiceClient.HttpProvider.OverallTimeout = TimeSpan.FromMinutes(_maxAttempts);
+            _graphServiceClient.HttpProvider.OverallTimeout = TimeSpan.FromMinutes(maxAttempts);
         }
     }
 }
